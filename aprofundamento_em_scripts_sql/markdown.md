@@ -29,7 +29,7 @@ INNER JOIN payment p WHERE c.customer_id = p.customer_id;
 
 SELECT 
     i.inventory_id AS 'ID_INVENTARIO',
-    i.film_id AS 'ID_FILM'
+    i.film_id AS 'ID_FILME'
 FROM inventory i
 LEFT JOIN rental r ON i.inventory_id = r.inventory_id WHERE r.rental_id IS NULL;
 ```
@@ -138,7 +138,7 @@ FROM payment;
 
 --Objetivo técnico: Calcular o número de dias entre a data do aluguel (rental_date) e a data de devolução (return_date) na tabela rental.
 
-SELECT rental_id, DATEDIFF(return_date, rental_date) AS 'DIAS_DE_ALUGUEL'
+SELECT rental_id AS 'ID_ALUGUEL', DATEDIFF(return_date, rental_date) AS 'DIAS_DE_ALUGUEL'
 FROM rental;
 ```
 
@@ -148,7 +148,7 @@ FROM rental;
 
 -- Objetivo técnico: Formatar a coluna payment_date da tabela payment para o padrão brasileiro dd/mm/yyyy.
 
-SELECT payment_id, DATE_FORMAT(payment_date, '%d/%m/%Y') AS 'DATA_FORMATADA'
+SELECT payment_id AS 'ID_PAGAMENTO', DATE_FORMAT(payment_date, '%d/%m/%Y') AS 'DATA_FORMATADA'
 FROM payment;
 ```
 
@@ -235,7 +235,13 @@ FROM address;
 
 -- Objetivo técnico: Usar uma CTE (WITH AS) para selecionar clientes com seus address_id, sem usar GROUP BY ou joins.
 
-WITH clientes_enderecos AS (SELECT customer_id, first_name, last_name, address_id FROM customer)
+WITH clientes_enderecos AS 
+(SELECT 
+    customer_id AS 'ID_CLIENTE', 
+    first_name AS 'NOME', 
+    last_name AS 'SOBRENOME', 
+    address_id AS 'ID_ENDERECO' 
+FROM customer)
 SELECT * FROM clientes_enderecos;
 ```
 
@@ -336,19 +342,173 @@ SELECT first_name, last_name FROM actor;
 
 ## Item 11: Visões (Views)
 ### CONCEITO:
+- Views: São “tabelas virtuais” baseadas no resultado de uma consulta `SELECT`. Elas não armazenam dados fisicamente, apenas representam dados existentes em uma ou mais tabelas de forma personalizada.
+
+Vantagens:
+- Simplificação: Permite encapsular consultas complexas e reutilizá-las como se fossem tabelas simples.
+- Reutilização de código: Evita repetir longas instruções SQL em diferentes partes do sistema.
+- Segurança: Restringe o acesso direto às tabelas base, exibindo apenas os dados necessários ao usuário ou aplicação.
+
+### 🔹 Desafio – Criar e Utilizar uma VIEW para Relatório de Aluguéis
+```sql
+-- Situação-problema: O setor financeiro precisa consultar frequentemente dados combinados de clientes, filmes e datas de aluguel. Para facilitar, a equipe de dados quer criar uma VIEW reutilizável com essas informações.
+
+-- Objetivo técnico: Criar uma VIEW que contenha nome do cliente, título do filme e data do aluguel e consultar essa VIEW para buscar todos os aluguéis de um cliente específico.
+
+CREATE VIEW aluguel_do_cliente AS
+SELECT 
+    c.first_name AS 'NOME',
+    c.last_name AS 'SOBRENOME',
+    f.title AS 'FILME',
+    r.rental_date AS 'DATA_ALUGUEL'
+FROM rental r
+INNER JOIN customer c ON c.customer_id = r.customer_id
+INNER JOIN inventory i ON i.inventory_id = r.inventory_id
+INNER JOIN film f ON f.film_id = i.film_id;
+
+SELECT * FROM aluguel_do_cliente
+WHERE NOME = 'MARY' AND SOBRENOME = 'SMITH';
+```
 
 
 ## Item 12: Filtragem com WHERE vs. HAVING
 ### CONCEITO:
+- `WHERE`: Filtra linhas individuais antes de qualquer agrupamento (`GROUP BY`). É usado para limitar quais registros entram na agregação ou no restante da consulta.
+- `HAVING`: Filtra os grupos de linhas após o `GROUP BY` e as funções de agregação (`COUNT`, `SUM`, etc.). Serve para aplicar condições sobre os resultados agregados.
+
+### 🔹 Desafio – Clientes com Alto Volume de Alugueis
+```sql
+-- Situação-problema: A equipe de relacionamento quer identificar clientes muito ativos, ou seja, que já realizaram mais de 30 aluguéis. Essa lista será usada para oferecer benefícios exclusivos.
+
+-- Objetivo técnico: Agrupar os dados da tabela rental por cliente e usar HAVING para filtrar somente aqueles com mais de 30 registros.
+
+SELECT
+    r.customer_id AS 'ID_CLIENTE', 
+    c.first_name AS 'NOME', 
+    c.last_name AS 'SOBRENOME', 
+    COUNT(*) AS 'TOTAL_ALUGUEL'
+FROM rental r
+INNER JOIN customer c WHERE c.customer_id = r.customer_id
+GROUP BY r.customer_id
+HAVING COUNT(*) > 30;
+```
 
 
 ## Item 13: Controle de Transações (COMMIT e ROLLBACK)
 ### CONCEITO:
+- Transação: É um conjunto de operações SQL que devem ser executadas como uma unidade atômica, ou seja, tudo ou nada. Se todas as operações forem bem-sucedidas, os dados são salvos; se ocorrer algum erro, nada é aplicado. Isso garante consistência, integridade e controle das alterações no banco de dados.
+- `START TRANSACTION`: Inicia uma nova transação. A partir desse ponto, nenhuma alteração é efetivada até que haja um `COMMIT` ou `ROLLBACK`.
+- `COMMIT`: Finaliza a transação e salva todas as alterações feitas no banco de dados.
+- `ROLLBACK`: Cancela a transação e desfaz todas as alterações realizadas desde o `START TRANSACTION`.
 
+### 🔹 Desafio – Registro de um Novo Aluguel com Atualização de Estoque
+```sql
+--- Situação-problema: Ao registrar um novo aluguel, é necessário garantir que o sistema:
+
+-- -> Insira o novo aluguel na tabela rental,
+-- -> Atualize o horário da última modificação na tabela inventory.
+
+--- Como essas ações devem ocorrer juntas, precisam ser tratadas dentro de uma transação para manter a integridade dos dados (ou tudo ocorre, ou nada).
+
+--- Objetivo técnico: Utilizar uma transação para garantir que o INSERT em rental e o UPDATE em inventory aconteçam de forma atômica.
+
+START TRANSACTION;
+
+INSERT INTO rental (rental_date, inventory_id, customer_id, staff_id)
+VALUES (NOW(), 10, 2, 1);
+
+UPDATE inventory SET last_update = NOW()
+WHERE inventory_id = 10;
+
+COMMIT;
+
+-- Consultando para ver se deu certo:
+SELECT 
+	r.rental_date AS 'DATA_ALUGUEL',
+	r.inventory_id AS 'ID_INVENTARIO',
+	i.last_update AS 'ULTIMA_ATUALIZACAO'
+FROM rental r 
+INNER JOIN inventory i 
+WHERE r.rental_date LIKE '2025%' AND i.last_update LIKE '2025%';
+```
 
 ## Item 14: Gatilhos (Triggers)
 ### CONCEITO:
+- `TRIGGER`: É um procedimento armazenado que é executado automaticamente toda vez que ocorre um evento específico (`INSERT`, `UPDATE` ou `DELETE`) em uma tabela.
 
+Utilidade dos Triggers:
+- Auditoria: Registrar automaticamente alterações feitas em uma tabela, como histórico de modificações ou quem fez cada mudança.
+- Validação complexa: Impor regras de negócio que vão além das constraints tradicionais, antes de aceitar os dados.
+- Replicação de dados: Copiar ou sincronizar dados entre tabelas (por exemplo, salvar um backup automático ao atualizar um registro).
+
+### 🔹 Desafio – Registro de Atualizações em Filmes
+```sql
+-- Situação-problema: A equipe de segurança da informação deseja saber quem alterou e quando os dados de filmes são modificados, para fins de auditoria. Para isso, é necessário que qualquer alteração na tabela film seja registrada em uma tabela de log.
+
+-- Objetivo técnico: Criar uma tabela de log e um TRIGGER que grave as alterações sempre que a tabela film for atualizada.
+
+-- Criando a tabela log
+CREATE TABLE log_film_update (
+    log_id INT AUTO_INCREMENT PRIMARY KEY,
+    film_id SMALLINT UNSIGNED,
+    old_title VARCHAR(255),
+    new_title VARCHAR(255),
+    last_update DATETIME,
+    FOREIGN KEY (film_id) REFERENCES film(film_id)
+);
+
+-- Criando o trigger para inserir na tabela log toda vez que houver atualização na tabela film
+DELIMITER //
+CREATE TRIGGER after_film_update
+AFTER UPDATE ON film
+FOR EACH ROW
+BEGIN
+    INSERT INTO log_film_update (film_id, old_title, new_title, last_update)
+    VALUES (OLD.film_id, OLD.title, NEW.title, NOW());
+END;
+//
+DELIMITER ;
+
+-- Atualizando a tabela film
+UPDATE film
+SET title = 'ACADEMY DINOSAUR REMASTERED'
+WHERE film_id = 1;
+
+-- Mostrando a tabela log
+SELECT * FROM log_film_update;
+```
 
 ## Item 15: Índices e Otimização (Indexes)
 ### CONCEITO:
+- Índice (`INDEX`): É uma estrutura de dados que acelera a busca de informações em uma tabela, especialmente quando ela é grande. Ele funciona como um atalho que permite ao banco de dados encontrar registros mais rapidamente, sem precisar varrer todas as linhas.
+
+- Analogia com o livro:
+Pense em um índice remissivo de um livro. Em vez de ler página por página até encontrar um capítulo, você vai direto ao índice, encontra a página desejada e acessa a informação em segundos.
+No banco de dados, o índice faz o mesmo: aponta rapidamente onde está o dado que você quer.
+
+- Vantagens:
+Melhora velocidade de leitura em buscas, filtros (`WHERE`), ordenações (`ORDER BY`) e junções (`JOIN`). Muito útil em colunas que são frequentemente usadas em consultas complexas.
+
+- Cuidado:
+Índices ocupam espaço extra. Muitos índices podem afetar a performance de escrita (`INSERT`, `UPDATE`, `DELETE`), pois precisam ser atualizados.
+
+### 🔹 Desafio - Criar uma consulta e um Índice para otimização
+```sql
+-- Situação-problema: A equipe de desenvolvimento precisa otimizar uma consulta que contém vários INNER JOINs
+
+SELECT * FROM rental r
+INNER JOIN customer c ON c.customer_id = r.customer_id
+INNER JOIN store s ON s.store_id = c.store_id
+INNER JOIN address a ON a.address_id = s.address_id
+INNER JOIN city city ON city.city_id = a.city_id
+INNER JOIN country country ON country.country_id = city.country_id;
+
+CREATE INDEX idx_rental_customer_id ON rental(customer_id);
+CREATE INDEX idx_customer_customer_id ON customer(customer_id);
+CREATE INDEX idx_store_store_id ON store(store_id);
+CREATE INDEX idx_address_address_id ON address(address_id);
+CREATE INDEX idx_city_city_id ON city(city_id);
+CREATE INDEX idx_country_country_id ON country(country_id);
+
+-- NÃO VI NENHUMA DIFERENÇA
+```
